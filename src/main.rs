@@ -1,11 +1,10 @@
 mod models;
 mod render;
 
-use bevy::{prelude::*, sprite::MaterialMesh2dBundle, app::CoreSet};
+use bevy::{prelude::*, sprite::MaterialMesh2dBundle};
 use bevy::app::CoreSet::Update;
 use bevy::input::common_conditions::*;
 use bevy::input::mouse::{MouseMotion, MouseWheel};
-use bevy::transform::TransformSystem;
 use models::{ProblemSpec};
 
 #[derive(Component)]
@@ -38,6 +37,8 @@ fn setup(
 
   commands.spawn((Camera2dBundle::new_with_far(100.), Camera));
 
+  let max_inst = problem.musicians.iter().max().unwrap().0;
+
   // Room
   commands.spawn((MaterialMesh2dBundle {
     mesh: meshes
@@ -46,7 +47,23 @@ fn setup(
     material: materials.add(ColorMaterial::from(Color::TEAL)),
     transform: Transform::from_xyz(problem.room_width / 2.0, problem.room_height/2.0, 0.0),
     ..default()
-  }, Room));
+  }, Room)).with_children(|parent| {
+    parent.spawn(
+      Text2dBundle {
+        text: Text::from_section(format!("Height: {}", problem.room_height), text_style.clone())
+          .with_alignment(TextAlignment::Left),
+        transform: Transform::from_xyz(problem.room_width/2.0 + 100.0, 0.0, 0.0),
+        ..default()
+      });
+
+    parent.spawn(
+      Text2dBundle {
+        text: Text::from_section(format!("Width: {}", problem.room_width), text_style.clone())
+          .with_alignment(TextAlignment::Center),
+        transform: Transform::from_xyz(0.0, -problem.room_height/2.0 - 100.0, 0.0),
+        ..default()
+      });
+  });
 
   // Stage
   commands.spawn((MaterialMesh2dBundle {
@@ -69,13 +86,13 @@ fn setup(
       });
   });
 
-  let handle = materials.add(ColorMaterial::from(Color::PURPLE));
+  let attendee_color = materials.add(ColorMaterial::from(Color::PURPLE));
 
   for attendee in problem.attendees.iter() {
-    println!("Adding attendee: {:?}", attendee);
+    // println!("Adding attendee: {:?}", attendee);
     commands.spawn(MaterialMesh2dBundle {
-      mesh: meshes.add(shape::RegularPolygon::new(15., 6).into()).into(),
-      material: handle.clone(),
+      mesh: meshes.add(shape::RegularPolygon::new(2., 6).into()).into(),
+      material: attendee_color.clone(),
       transform: Transform::from_translation(Vec3::new(attendee.position.x, attendee.position.y, 0.3)),
       ..default()
     });
@@ -87,15 +104,29 @@ fn setup(
     transform: Transform::from_translation(Vec3::new(0.0, 0.0, 1.0)),
     ..default()
   });
-}
 
-fn debug_globaltransform(
-  query: Query<&GlobalTransform, With<Room>>,
-) {
-  let gxf = query.single();
-  debug!("Room at: {:?}", gxf.translation());
-}
+  for (idx, inst) in problem.musicians.iter().enumerate() {
+    let color = colorous::TURBO.eval_rational(inst.0, max_inst);
 
+    let x_start = problem.stage_bottom_left[0] + 10.0;
+    let y_start = problem.stage_bottom_left[1] + 10.0;
+
+    let x_step = 10.0f32;
+    let y_step = 10.0f32;
+
+    let items_per_row = (problem.stage_width/10.0).floor() as usize;
+
+    let x = x_step * ((idx % items_per_row) as f32);
+    let y = y_step * ((idx / items_per_row) as f32);
+
+    commands.spawn(MaterialMesh2dBundle {
+      mesh: meshes.add(shape::Circle::new(5.0).into()).into(),
+      material: materials.add(ColorMaterial::from(Color::rgb_u8(color.r, color.g, color.b))),
+      transform: Transform::from_translation(Vec3::new(x_start + x, y_start + y, 10.0)),
+      ..default()
+    });
+  }
+}
 
 //https://bevy-cheatbook.github.io/input/mouse.html
 // https://bevy-cheatbook.github.io/features/camera.html
@@ -107,7 +138,7 @@ fn zoom_camera(
   for ev in scroll_evr.iter() {
     match ev.unit {
       MouseScrollUnit::Line => {
-        println!("Scroll (line units): vertical: {}, horizontal: {}", ev.y, ev.x);
+        // println!("Scroll (line units): vertical: {}, horizontal: {}", ev.y, ev.x);
       }
       MouseScrollUnit::Pixel => {
         let mut projection = q.single_mut();
@@ -123,19 +154,22 @@ fn zoom_camera(
 }
 
 fn move_camera(
+  projection_query: Query<&mut OrthographicProjection, With<Camera>>,
   mut q: Query<&mut Transform, With<Camera>>,
   mut motion_evr: EventReader<MouseMotion>,
 ) {
+  let projection = projection_query.single();
 
-  let mut projection = q.single_mut();
+  let mut transform = q.single_mut();
   for ev in motion_evr.iter() {
-    projection.translation.x -= ev.delta.x * 2.0;
-    projection.translation.y += ev.delta.y * 2.0;
+    let scale = projection.scale.clamp(1.0, 5.0);
+    transform.translation.x -= ev.delta.x * scale;
+    transform.translation.y += ev.delta.y * scale;
   }
 }
 
 fn main() {
-  let problem_json = include_str!("../problems/example.json");
+  let problem_json = include_str!("../problems/problem-1.json");
   let problem_spec = serde_json::from_str(problem_json).unwrap();
 
   App::new()

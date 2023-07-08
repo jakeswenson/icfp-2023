@@ -3,7 +3,7 @@ use serde::{Serialize, Deserialize};
 pub type Dimension = f32;
 
 #[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Hash, Deserialize)]
-pub struct Instrument(pub u8);
+pub struct Instrument(pub usize);
 
 #[derive(Debug, PartialEq, Deserialize)]
 pub struct Attendee {
