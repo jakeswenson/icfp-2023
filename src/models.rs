@@ -2,17 +2,17 @@ use serde::{Serialize, Deserialize};
 
 pub type Dimension = f32;
 
-#[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Hash, Deserialize)]
+#[derive(Copy, Clone, Debug, Ord, PartialOrd, Eq, PartialEq, Hash, Deserialize)]
 pub struct Instrument(pub usize);
 
-#[derive(Debug, PartialEq, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize)]
 pub struct Attendee {
   #[serde(flatten)]
   pub position: Position,
-  pub tastes: Vec<f32>
+  pub tastes: Vec<i64>
 }
 
-#[derive(Debug, PartialEq, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize)]
 pub struct ProblemSpec {
   pub room_height: Dimension,
   pub room_width: Dimension,
@@ -23,7 +23,7 @@ pub struct ProblemSpec {
   pub attendees: Vec<Attendee>
 }
 
-#[derive(Debug, PartialEq, PartialOrd, Deserialize, Serialize)]
+#[derive(Copy, Clone, Debug, PartialEq, PartialOrd, Deserialize, Serialize)]
 pub struct Position {
   pub x: Dimension,
   pub y: Dimension,

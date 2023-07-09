@@ -1,198 +1,64 @@
+use std::path::{PathBuf};
+use crate::models::ProblemSpec;
+use clap::{Parser, Subcommand};
+
 mod models;
 mod render;
+mod optimizer;
 
-use bevy::{prelude::*, sprite::MaterialMesh2dBundle};
-use bevy::app::CoreSet::Update;
-use bevy::input::common_conditions::*;
-use bevy::input::mouse::{MouseMotion, MouseWheel};
-use models::{ProblemSpec};
-
-#[derive(Component)]
-struct Camera;
-
-#[derive(Component)]
-struct Room;
-
-#[derive(Component)]
-struct Stage;
-
-#[derive(Resource)]
-struct Problem(ProblemSpec);
-
-fn setup(
-  problem: Res<Problem>,
-  mut commands: Commands,
-  mut meshes: ResMut<Assets<Mesh>>,
-  mut materials: ResMut<Assets<ColorMaterial>>,
-  asset_server: Res<AssetServer>
-) {
-  let problem: &ProblemSpec = &problem.0;
-
-  let font = asset_server.load("fonts/FiraSans-Bold.ttf");
-  let text_style = TextStyle {
-    font: font.clone(),
-    font_size: 60.0,
-    color: Color::WHITE,
-  };
-
-  commands.spawn((Camera2dBundle::new_with_far(100.), Camera));
-
-  let max_inst = problem.musicians.iter().max().unwrap().0;
-
-  // Room
-  commands.spawn((MaterialMesh2dBundle {
-    mesh: meshes
-      .add(shape::Quad::new(Vec2::new(problem.room_width, problem.room_height)).into())
-      .into(),
-    material: materials.add(ColorMaterial::from(Color::TEAL)),
-    transform: Transform::from_xyz(problem.room_width / 2.0, problem.room_height/2.0, 0.0),
-    ..default()
-  }, Room)).with_children(|parent| {
-    parent.spawn(
-      Text2dBundle {
-        text: Text::from_section(format!("Height: {}", problem.room_height), text_style.clone())
-          .with_alignment(TextAlignment::Left),
-        transform: Transform::from_xyz(problem.room_width/2.0 + 100.0, 0.0, 0.0),
-        ..default()
-      });
-
-    parent.spawn(
-      Text2dBundle {
-        text: Text::from_section(format!("Width: {}", problem.room_width), text_style.clone())
-          .with_alignment(TextAlignment::Center),
-        transform: Transform::from_xyz(0.0, -problem.room_height/2.0 - 100.0, 0.0),
-        ..default()
-      });
-  });
-
-  // Stage
-  commands.spawn((MaterialMesh2dBundle {
-    mesh: meshes
-      .add(shape::Quad::flipped(Vec2::new(problem.stage_width, problem.stage_height)).into())
-      .into(),
-    material: materials.add(ColorMaterial::from(Color::LIME_GREEN)),
-    transform: Transform::from_xyz(
-      problem.stage_bottom_left[0] + (problem.stage_width/2.0),
-      problem.stage_bottom_left[1] + (problem.stage_height/2.0),
-      0.1),
-    ..default()
-  }, Stage)).with_children(|parent| {
-    parent.spawn(
-      Text2dBundle {
-        text: Text::from_section("Stage", text_style.clone())
-          .with_alignment(TextAlignment::Center),
-        transform: Transform::from_translation(Vec3::new(0.0, 0.0, 0.2)),
-        ..default()
-      });
-  });
-
-  let attendee_color = materials.add(ColorMaterial::from(Color::PURPLE));
-
-  for attendee in problem.attendees.iter() {
-    // println!("Adding attendee: {:?}", attendee);
-    commands.spawn(MaterialMesh2dBundle {
-      mesh: meshes.add(shape::RegularPolygon::new(2., 6).into()).into(),
-      material: attendee_color.clone(),
-      transform: Transform::from_translation(Vec3::new(attendee.position.x, attendee.position.y, 0.3)),
-      ..default()
-    });
-  }
-
-  commands.spawn(MaterialMesh2dBundle {
-    mesh: meshes.add(shape::RegularPolygon::new(5., 3).into()).into(),
-    material: materials.add(ColorMaterial::from(Color::RED)),
-    transform: Transform::from_translation(Vec3::new(0.0, 0.0, 1.0)),
-    ..default()
-  });
-
-  for (idx, inst) in problem.musicians.iter().enumerate() {
-    let color = colorous::TURBO.eval_rational(inst.0, max_inst);
-
-    let x_start = problem.stage_bottom_left[0] + 10.0;
-    let y_start = problem.stage_bottom_left[1] + 10.0;
-
-    let x_step = 10.0f32;
-    let y_step = 10.0f32;
-
-    let items_per_row = (problem.stage_width/10.0).floor() as usize;
-
-    let x = x_step * ((idx % items_per_row) as f32);
-    let y = y_step * ((idx / items_per_row) as f32);
-
-    commands.spawn(MaterialMesh2dBundle {
-      mesh: meshes.add(shape::Circle::new(5.0).into()).into(),
-      material: materials.add(ColorMaterial::from(Color::rgb_u8(color.r, color.g, color.b))),
-      transform: Transform::from_translation(Vec3::new(x_start + x, y_start + y, 10.0)),
-      ..default()
-    });
-  }
+#[derive(Parser)]
+#[command(author, version, about, long_about = None)]
+#[command(propagate_version = true)]
+struct Cli {
+  #[command(subcommand)]
+  command: Commands,
 }
 
-//https://bevy-cheatbook.github.io/input/mouse.html
-// https://bevy-cheatbook.github.io/features/camera.html
-fn zoom_camera(
-  mut q: Query<&mut OrthographicProjection, With<Camera>>,
-  mut scroll_evr: EventReader<MouseWheel>,
-) {
-  use bevy::input::mouse::MouseScrollUnit;
-  for ev in scroll_evr.iter() {
-    match ev.unit {
-      MouseScrollUnit::Line => {
-        // println!("Scroll (line units): vertical: {}, horizontal: {}", ev.y, ev.x);
-      }
-      MouseScrollUnit::Pixel => {
-        let mut projection = q.single_mut();
+#[derive(Subcommand)]
+enum Commands {
+  /// Runs optimizer on provided problem
+  Optimize {
+    problem: PathBuf,
+  },
+  /// Runs Renderer on provided problem
+  Render {
+    problem: PathBuf,
+  },
+  /// Runs Renderer on provided problem
+  Pso {
+    problem: PathBuf,
+    #[arg(short, long)]
+    render: bool
+  },
+}
 
-        projection.scale *= 1.0 - (ev.y/1000.);
+fn main() -> Result<(), anyhow::Error> {
+  let cli: Cli = Cli::parse();
 
-        // always ensure you end up with sane values
-        // (pick an upper and lower bound for your application)
-        projection.scale = projection.scale.clamp(0.2, 100.0);
+  match &cli.command {
+    Commands::Optimize { problem } => {
+      let json = std::fs::read_to_string(problem)?;
+      let problem_spec: ProblemSpec = serde_json::from_str(&json)?;
+      dbg!(optimizer::optimize(problem_spec));
+    }
+    Commands::Render { problem } => {
+      let json = std::fs::read_to_string(problem)?;
+      let problem_spec: ProblemSpec = serde_json::from_str(&json)?;
+      render::run_app(dbg!(problem_spec), None);
+    }
+    Commands::Pso { problem, render } => {
+      let json = std::fs::read_to_string(problem)?;
+      let problem_spec: ProblemSpec = serde_json::from_str(&json)?;
+      let result = optimizer::particle_swarm_optimizer(&problem_spec);
+
+      if *render {
+        render::run_app(problem_spec, Some(result))
       }
     }
   }
+
+  Ok(())
 }
-
-fn move_camera(
-  projection_query: Query<&mut OrthographicProjection, With<Camera>>,
-  mut q: Query<&mut Transform, With<Camera>>,
-  mut motion_evr: EventReader<MouseMotion>,
-) {
-  let projection = projection_query.single();
-
-  let mut transform = q.single_mut();
-  for ev in motion_evr.iter() {
-    let scale = projection.scale.clamp(1.0, 5.0);
-    transform.translation.x -= ev.delta.x * scale;
-    transform.translation.y += ev.delta.y * scale;
-  }
-}
-
-fn main() {
-  let problem_json = include_str!("../problems/problem-1.json");
-  let problem_spec = serde_json::from_str(problem_json).unwrap();
-
-  App::new()
-    // Background Color
-    // https://bevy-cheatbook.github.io/window/clear-color.html
-    .insert_resource(ClearColor(Color::GRAY))
-    .insert_resource(Problem(problem_spec))
-    .add_plugins(DefaultPlugins)
-    .add_startup_system(setup)
-    .add_system(zoom_camera)
-    .add_system(
-      move_camera
-        .in_base_set(Update)
-        .run_if(input_pressed(MouseButton::Left))
-    )
-    // .add_system(
-    //   debug_globaltransform
-    //     .in_base_set(CoreSet::PostUpdate)
-    //     .after(TransformSystem::TransformPropagate)
-    // )
-    .run();
-}
-
 
 #[cfg(test)]
 mod tests {
