@@ -1,4 +1,7 @@
 use std::collections::HashMap;
+use std::rc::Rc;
+use std::sync::Mutex;
+use indicatif::{ProgressBar, ProgressStyle};
 use mincost::{Particle, PsoConfig};
 use multimap::MultiMap;
 use rand::Rng;
@@ -129,7 +132,7 @@ pub fn particle_swarm_optimizer(problem: &ProblemSpec) -> HashMap<MusicianId, Po
     .map(|(idx, inst)| (MusicianId(idx), inst))
     .collect();
 
-  let mut mus_map: HashMap<MusicianId, Position> = HashMap::new();
+  let mus_map: HashMap<MusicianId, Position> = HashMap::new();
 
   let x_start = problem.stage_bottom_left[0] + 10.0;
   let y_start = problem.stage_bottom_left[1] + 10.0;
@@ -149,13 +152,31 @@ pub fn particle_swarm_optimizer(problem: &ProblemSpec) -> HashMap<MusicianId, Po
   }
 
   let mut inst_score_functions: HashMap<Instrument, Box<dyn Fn(Position) -> f64>> = HashMap::new();
+  let m = Rc::new(Mutex::new(mus_map));
+
+  fn dist(p1: &Position, p2: &Position) -> f32 {
+    let del_x = p1.x - p2.x;
+    let del_y = p1.y - p2.y;
+
+    f32::sqrt(del_x * del_x + del_y * del_y)
+  }
 
   for (inst, scores) in inst_scores {
+    let m = Rc::clone(&m);
     inst_score_functions.insert(inst, Box::new(move |pos| {
       if !(x_start..=x_end).contains(&pos.x)
         || !(y_start..=y_end).contains(&pos.y) {
         return 10.0;
       }
+
+      let l = m.lock();
+      let b = l.unwrap();
+      for other in b.values() {
+        if dist(&pos, other) <= 10.0 {
+          return 100.0
+        }
+      }
+
       scores.iter().map(|(a_pos, score)| {
         let top = (*score as f64) * 1_000_000.0f64;
         let del_x = a_pos.x - pos.x;
@@ -180,8 +201,23 @@ pub fn particle_swarm_optimizer(problem: &ProblemSpec) -> HashMap<MusicianId, Po
   //   mus_map.insert(MusicianId(idx), Position { x, y })
   // }
 
+  let mut progress: u64 = 0;
+
+
+  let pb = ProgressBar::new(problem.musicians.len() as u64);
+
+  let sty = ProgressStyle::with_template(
+    "{spinner:.green} [{elapsed_precise}] {wide_bar:.cyan/blue} {pos:>3}/{len} {msg}",
+  )
+    .unwrap()
+    .progress_chars("#>-");
+
+  pb.set_style(sty);
+
   for (mus, inst) in mus_inst {
-    println!("Optimizing Musician: {:?}", mus);
+    pb.set_position(progress);
+    pb.set_message(format!("Optimizing {:?}", mus));
+    progress+=1;
     let mut opt = mincost::PsOpt::init(
       PsoConfig {
         pop_size: 100,
@@ -199,8 +235,24 @@ pub fn particle_swarm_optimizer(problem: &ProblemSpec) -> HashMap<MusicianId, Po
       },
       || {
         let mut random = rand::thread_rng();
-        let x = random.gen_range(x_start..=x_end);
-        let y = random.gen_range(y_start..=y_end);
+        let x ;
+        let y ;
+
+        let l = m.lock();
+        let b = l.unwrap();
+
+        loop {
+          x = random.gen_range(x_start..=x_end);
+          y = random.gen_range(y_start..=y_end);
+
+          for other in b.values() {
+            if dist(&Position{x,y}, other) <= 10.0 {
+              continue
+            }
+          }
+
+          break;
+        }
 
         Particle {
           position: vec![x, y],
@@ -212,11 +264,15 @@ pub fn particle_swarm_optimizer(problem: &ProblemSpec) -> HashMap<MusicianId, Po
 
     let position = opt.optimize();
 
-    mus_map.insert(mus, Position { x: position[0], y: position[1] });
+    m.lock().unwrap().insert(mus, Position { x: position[0], y: position[1] });
   }
 
+  pb.finish_with_message("Optimized");
 
-  mus_map
+
+  let lock = m.lock();
+  let guard = lock.unwrap();
+  guard.clone()
 }
 
 

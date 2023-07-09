@@ -1,6 +1,7 @@
 use std::path::{PathBuf};
-use crate::models::ProblemSpec;
+use crate::models::{Position, ProblemSpec, Solution};
 use clap::{Parser, Subcommand};
+use crate::optimizer::MusicianId;
 
 mod models;
 mod render;
@@ -24,8 +25,8 @@ enum Commands {
   Render {
     problem: PathBuf,
   },
-  /// Runs Renderer on provided problem
-  Pso {
+  /// Runs Particle Swarm Optimizer on the provided problem
+  Swarm {
     problem: PathBuf,
     #[arg(short, long)]
     render: bool
@@ -46,10 +47,23 @@ fn main() -> Result<(), anyhow::Error> {
       let problem_spec: ProblemSpec = serde_json::from_str(&json)?;
       render::run_app(dbg!(problem_spec), None);
     }
-    Commands::Pso { problem, render } => {
+    Commands::Swarm { problem, render } => {
       let json = std::fs::read_to_string(problem)?;
       let problem_spec: ProblemSpec = serde_json::from_str(&json)?;
       let result = optimizer::particle_swarm_optimizer(&problem_spec);
+
+      let mut ordered: Vec<Position> = Vec::with_capacity(result.len());
+
+      for idx in 0..result.len() {
+        let v = result.get(&MusicianId(idx)).unwrap();
+        ordered.push(Position { x: v.x.floor(), y: v.y.floor() });
+      }
+
+      let solution = Solution {
+        placements: ordered
+      };
+
+      std::fs::write("solution.json", &serde_json::to_vec(&solution)?)?;
 
       if *render {
         render::run_app(problem_spec, Some(result))
