@@ -42,7 +42,7 @@ fn main() -> Result<(), anyhow::Error> {
     Commands::Optimize { problem } => {
       let json = std::fs::read_to_string(problem)?;
       let problem_spec: ProblemSpec = serde_json::from_str(&json)?;
-      dbg!(optimizer::optimize(problem_spec));
+      dbg!(optimizer::z3::optimize(problem_spec));
     }
     Commands::Render { problem, solution } => {
       let json = std::fs::read_to_string(problem)?;

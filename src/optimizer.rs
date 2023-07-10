@@ -5,9 +5,9 @@ use indicatif::{ProgressBar, ProgressStyle};
 use mincost::{Particle, PsoConfig};
 use multimap::MultiMap;
 use rand::Rng;
-use z3::ast::Ast;
-use z3::Symbol;
 use crate::models::{Attendee, Instrument, Position, ProblemSpec};
+
+pub mod z3;
 
 
 #[derive(Clone, Copy, Hash, Ord, PartialOrd, Eq, PartialEq, Debug)]
@@ -15,117 +15,6 @@ pub struct MusicianId(pub usize);
 
 #[derive(Clone, Copy, Hash, Ord, PartialOrd, Eq, PartialEq, Debug)]
 pub struct AttendeeId(usize);
-
-pub fn optimize(problem: ProblemSpec) -> HashMap<MusicianId, Position> {
-
-  let musicians: HashMap<MusicianId, Instrument> = problem.musicians.iter()
-    .copied()
-    .enumerate()
-    .map(|(idx, inst)| (MusicianId(idx), inst))
-    .collect();
-
-  let attendees: HashMap<AttendeeId, Attendee> = problem.attendees.clone().into_iter()
-    .enumerate()
-    .map(|(idx, a)| (AttendeeId(idx), a))
-    .collect();
-
-  let config = z3::Config::new();
-  let ctx = z3::Context::new(&config);
-  let optimize = z3::Optimize::new(&ctx);
-
-  type Score<'a> = z3::ast::Int<'a>;
-
-  #[derive(PartialEq, Eq, Clone, Debug)]
-  struct MusicianSymbols<'a> {
-    x_var: Score<'a>,
-    y_var: Score<'a>
-  }
-
-  let musician_symbol_map: HashMap<MusicianId, MusicianSymbols> = musicians.keys()
-    .copied()
-    .map(|m| {
-      let x_symbol = Symbol::String(format!("M{}-X", m.0));
-      let y_symbol = Symbol::String(format!("M{}-Y", m.0));
-      let x_var = Score::new_const(&ctx, x_symbol);
-      let y_var = Score::new_const(&ctx, y_symbol);
-      (m, MusicianSymbols {
-        x_var,
-        y_var
-      })
-    }).collect();
-
-  let attendee_tastes: HashMap<AttendeeId, HashMap<MusicianId, i64>> =  attendees.iter().map(|(a_id, a)| {
-    (*a_id, musicians.iter().map(|(m, inst)| {
-      (*m, 1_000_000i64.checked_mul(a.tastes[inst.0]).unwrap())
-    }).collect())
-  }).collect();
-
-  let scores: Vec<Score<'_>> = attendees.iter().flat_map(|(attendees_id, a)| {
-    let x = a.position.x as i64;
-    let y = a.position.y as i64;
-    let attendees_id = *attendees_id;
-
-    musician_symbol_map.iter()
-      .map(move |(musician_id, symbols)| {
-        (attendees_id, x, y, *musician_id, symbols.clone())
-      })
-  }).map(|(attendees_id, x, y, musician_id, symbols)| {
-    let x: i64 = x;
-    let y: i64 = y;
-    let x_dist = symbols.x_var.clone() - x;
-    let y_dist = symbols.y_var.clone() - y;
-
-    let dist_squared = x_dist.clone() * x_dist + y_dist.clone() * y_dist;
-    let calculated_score = attendee_tastes
-      .get(&attendees_id).unwrap()
-      .get(&musician_id).copied().unwrap();
-
-    let score = Score::from_i64(&ctx, calculated_score);
-
-    let adjusted = score/dist_squared;
-
-    adjusted
-  }).collect();
-
-  let x_start = (problem.stage_bottom_left[0] as i64) + 10;
-  let y_start = (problem.stage_bottom_left[1] as i64) + 10;
-
-  let x_end = x_start - 20 + (problem.room_width as i64);
-  let y_end = y_start - 20 + (problem.stage_height as i64);
-
-  let x_start = z3::ast::Int::from_i64(&ctx, x_start);
-  let y_start = z3::ast::Int::from_i64(&ctx, y_start);
-  let x_end = z3::ast::Int::from_i64(&ctx, x_end);
-  let y_end = z3::ast::Int::from_i64(&ctx, y_end);
-
-  musician_symbol_map.values().for_each(|syms| {
-    optimize.assert(&syms.x_var.clone().ge(&x_start));
-    optimize.assert(&syms.y_var.clone().ge(&y_start));
-
-    optimize.assert(&syms.x_var.clone().le(&x_end));
-    optimize.assert(&syms.y_var.clone().le(&y_end));
-  });
-
-
-  let total_score_symbol = Symbol::String("TotalScore".into());
-
-  let total_score = Score::new_const(&ctx, total_score_symbol);
-
-  let sum_of_scores = scores.into_iter().reduce(|a, b| a + b).unwrap().clone();
-
-  dbg!(optimize.check(&[total_score._eq(&sum_of_scores)]));
-
-  optimize.maximize(&sum_of_scores);
-
-  let model = optimize.get_model().unwrap();
-
-  musician_symbol_map.iter().map(|(&id, syms)| {
-    let x = model.eval(&syms.x_var, true).and_then(|i| i.as_i64()).unwrap_or_default() as f32;
-    let y = model.eval(&syms.y_var, true).and_then(|i| i.as_i64()).unwrap_or_default() as f32;
-
-    (id, Position { x, y })
-  }).collect()
-}
 
 // Really 10 is supposed to be allowed, but I'm not sure if this works or not
 const ALLOWED_MUSICIAN_DISTANCE: f32 = 10.5;
@@ -155,7 +44,7 @@ pub fn particle_swarm_optimizer(problem: &ProblemSpec) -> HashMap<MusicianId, Po
   }
 
   let mut inst_score_functions: HashMap<Instrument, Box<dyn Fn(Position) -> f64>> = HashMap::new();
-  let m = Rc::new(RefCell::new(mus_map));
+  let musician_position_state_map = Rc::new(RefCell::new(mus_map));
 
   fn dist(p1: &Position, p2: &Position) -> f32 {
     let del_x = p1.x - p2.x;
@@ -165,7 +54,7 @@ pub fn particle_swarm_optimizer(problem: &ProblemSpec) -> HashMap<MusicianId, Po
   }
 
   for (inst, scores) in inst_scores {
-    let m = Rc::clone(&m);
+    let m = Rc::clone(&musician_position_state_map);
     inst_score_functions.insert(inst, Box::new(move |pos| {
       if !(x_start..=x_end).contains(&pos.x)
         || !(y_start..=y_end).contains(&pos.y) {
@@ -189,23 +78,7 @@ pub fn particle_swarm_optimizer(problem: &ProblemSpec) -> HashMap<MusicianId, Po
     }));
   }
 
-  // for (idx, inst) in problem.musicians.iter().enumerate() {
-  //
-  //   let x_step = 10.0f32;
-  //   let y_step = 10.0f32;
-  //
-  //   let items_per_row = (problem.stage_width/10.0).floor() as usize - 1;
-  //
-  //   let x = x_start + (x_step * ((idx % items_per_row) as f32));
-  //   let y = y_start + (y_step * ((idx / items_per_row) as f32));
-  //
-  //   mus_map.insert(MusicianId(idx), Position { x, y })
-  // }
-
-  let mut progress: u64 = 0;
-
-
-  let pb = ProgressBar::new(problem.musicians.len() as u64);
+  let pb = ProgressBar::new(problem.musicians.len() as u64 + 1);
 
   let sty = ProgressStyle::with_template(
     "{spinner:.green} [{elapsed_precise}] {wide_bar:.cyan/blue} {pos:>3}/{len} {msg}",
@@ -216,16 +89,16 @@ pub fn particle_swarm_optimizer(problem: &ProblemSpec) -> HashMap<MusicianId, Po
   pb.set_style(sty);
 
   for (mus, inst) in mus_inst {
-    pb.set_position(progress);
     pb.set_message(format!("Optimizing {:?}", mus));
-    progress+=1;
+    pb.inc(1);
+
     let mut opt = mincost::PsOpt::init(
       PsoConfig {
         pop_size: 10,
-        omega: 0.1,
+        omega: 1.0,
         phi_g: 0.1,
         phi_p: 0.1,
-        learning_rate: 0.1,
+        learning_rate: 0.6,
         iteration: 1000,
       },
       |p| {
@@ -243,7 +116,7 @@ pub fn particle_swarm_optimizer(problem: &ProblemSpec) -> HashMap<MusicianId, Po
           x = random.gen_range(x_start..=x_end);
           y = random.gen_range(y_start..=y_end);
 
-          for other in m.borrow().values() {
+          for other in musician_position_state_map.borrow().values() {
             if dist(&Position{x,y}, other) <= ALLOWED_MUSICIAN_DISTANCE {
               continue
             }
@@ -260,15 +133,14 @@ pub fn particle_swarm_optimizer(problem: &ProblemSpec) -> HashMap<MusicianId, Po
       }
     );
 
+    let best_position_for_musician = opt.optimize();
 
-    let position = opt.optimize();
-
-    m.borrow_mut().insert(mus, Position { x: position[0], y: position[1] });
+    musician_position_state_map.borrow_mut().insert(mus, Position { x: best_position_for_musician[0], y: best_position_for_musician[1] });
   }
 
   pb.finish_with_message("Optimized");
 
-  let result = m.borrow();
+  let result = musician_position_state_map.borrow();
   result.clone()
 }
 
