@@ -1,12 +1,10 @@
-use std::cell::RefCell;
 use std::collections::HashMap;
-use std::rc::Rc;
 use indicatif::{ProgressBar, ProgressStyle};
 use mincost::{Particle, PsoConfig};
 use multimap::MultiMap;
 use rand::Rng;
 use crate::models::{Attendee, Instrument, Position, ProblemSpec};
-use parry2d::math::{Isometry, Point, Vector};
+use parry2d::math::{Isometry, Point};
 use parry2d::shape::{Ball, Segment};
 use parry2d::bounding_volume::BoundingVolume;
 
@@ -27,8 +25,6 @@ pub fn particle_swarm_optimizer(problem: &ProblemSpec) -> HashMap<MusicianId, Po
     .map(|(idx, inst)| (MusicianId(idx), inst))
     .collect();
 
-  let mus_map: HashMap<MusicianId, Position> = HashMap::new();
-
   let x_start = problem.stage_bottom_left[0] + 10.0;
   let y_start = problem.stage_bottom_left[1] + 10.0;
 
@@ -37,17 +33,13 @@ pub fn particle_swarm_optimizer(problem: &ProblemSpec) -> HashMap<MusicianId, Po
 
   let attendees: HashMap<usize, Attendee> = problem.attendees.iter().cloned().enumerate().collect();
 
-
-  let mut inst_scores: MultiMap<Instrument, (Position, f64)> = multimap::MultiMap::new();
+  let mut instrument_tastes: MultiMap<Instrument, (Position, f64)> = multimap::MultiMap::new();
 
   for (_id, attendee) in attendees {
     for (inst, &score) in attendee.tastes.iter().enumerate() {
-      inst_scores.insert(Instrument(inst), (attendee.position, score));
+      instrument_tastes.insert(Instrument(inst), (attendee.position, score));
     }
   }
-
-  let mut inst_score_functions: HashMap<Instrument, Box<dyn Fn(Position) -> f64>> = HashMap::new();
-  let musician_position_state_map = Rc::new(RefCell::new(mus_map));
 
   fn dist(p1: &Position, p2: &Position) -> f32 {
     let del_x = p1.x - p2.x;
@@ -56,32 +48,38 @@ pub fn particle_swarm_optimizer(problem: &ProblemSpec) -> HashMap<MusicianId, Po
     f32::sqrt(del_x * del_x + del_y * del_y)
   }
 
-  for (inst, scores) in inst_scores {
-    let m = Rc::clone(&musician_position_state_map);
-    inst_score_functions.insert(inst, Box::new(move |pos| {
-      if !(x_start..=x_end).contains(&pos.x)
-        || !(y_start..=y_end).contains(&pos.y) {
+  let mut inst_score_functions: HashMap<Instrument, Box<dyn Fn(HashMap<MusicianId, Position>) -> f64>> = HashMap::new();
+  inst_score_functions.insert(Instrument(0), Box::new(move |all_musicians| {
+
+    let mut score: f64 = 0.0;
+
+    for (musician_id, musician_pos) in all_musicians.iter() {
+      if !(x_start..=x_end).contains(&musician_pos.x)
+        || !(y_start..=y_end).contains(&musician_pos.y) {
         return f64::MAX
       }
 
-      for other in m.borrow().values() {
-        if dist(&pos, other) <= ALLOWED_MUSICIAN_DISTANCE {
+      for other in all_musicians.values() {
+        if dist(&musician_pos, other) <= ALLOWED_MUSICIAN_DISTANCE {
           return f64::MAX
         }
       }
 
-      scores.iter().map(|(a_pos, taste)| {
+      let inst = mus_inst.get(&musician_id).unwrap();
+      let audience_tastes = instrument_tastes.get_vec(inst).unwrap();
+
+      score += audience_tastes.iter().map(|(a_pos, taste)| {
 
         // check if any musician other is in the way between pos and a_pos
         let line_start = Point::new(a_pos.x, a_pos.y);
-        let line_end = Point::new(pos.x, pos.y);
+        let line_end = Point::new(musician_pos.x, musician_pos.y);
         let segment = Segment::new(line_start, line_end);
         let segment_aabb = segment.aabb(&Isometry::translation(line_start.x, line_start.y));
         let circle_radius = 5.0;
         let circle_shape = Ball::new(circle_radius);
 
-        for other in m.borrow().values() {
-          if pos == *other {
+        for other in all_musicians.values() {
+          if musician_pos == other {
             continue
           } else {
             let circle_center = Point::new(other.x, other.y);
@@ -90,28 +88,26 @@ pub fn particle_swarm_optimizer(problem: &ProblemSpec) -> HashMap<MusicianId, Po
             if segment_aabb.intersects(&circle_aabb) {
               return 0.0
             }
-
-            /*
-            let intersection = parry2d::query::intersection_test(
-              &Isometry::translation(line_start.x, line_start.y),
-              &segment,
-              &Isometry::translation(circle_center.x, circle_center.y),
-              &circle_shape);
-              */
           }
         }
 
         let top = (*taste as f64) * 1_000_000.0f64;
-        let del_x = a_pos.x - pos.x;
-        let del_y = a_pos.y - pos.y;
+        let del_x = a_pos.x - musician_pos.x;
+        let del_y = a_pos.y - musician_pos.y;
         let dist_sq = del_x * del_x + del_y * del_y;
 
-        -(top / (dist_sq as f64))
-      }).sum()
-    }));
-  }
+        let score: f64 = -(top / (dist_sq as f64));
+        score
+      }).sum::<f64>()
+    }
 
-  let pb = ProgressBar::new(problem.musicians.len() as u64 + 1);
+    score
+  }));
+
+  let particle_count: usize = 200;
+  let num_iterations: usize = 10_000;
+
+  let pb = ProgressBar::new((particle_count * num_iterations * 2) as u64);
 
   let sty = ProgressStyle::with_template(
     "{spinner:.green} [{elapsed_precise}] {wide_bar:.cyan/blue} {pos:>3}/{len} {msg}",
@@ -121,60 +117,82 @@ pub fn particle_swarm_optimizer(problem: &ProblemSpec) -> HashMap<MusicianId, Po
 
   pb.set_style(sty);
 
-  for (mus, inst) in mus_inst {
-    pb.set_message(format!("Optimizing {:?}", mus));
-    pb.inc(1);
 
-    let mut opt = mincost::PsOpt::init(
-      PsoConfig {
-        pop_size: 20,
-        omega: 1.0,
-        phi_g: 0.1,
-        phi_p: 0.1,
-        learning_rate: 0.2,
-        iteration: 50,
-      },
-      |p| {
-        let pos = Position { x: p[0], y: p[1] };
-        let func = inst_score_functions.get(&inst).unwrap();
+  let mut opt = mincost::PsOpt::init(
+    PsoConfig {
+      pop_size: particle_count,
+      omega: 1.0,
+      phi_g: 0.2,
+      phi_p: 0.1,
+      learning_rate: 0.6,
+      iteration: num_iterations,
+    },
+    |p| {
+      pb.inc(1);
 
-        func(pos)
-      },
-      || {
-        let mut random = rand::thread_rng();
-        let x ;
-        let y ;
+      let musician_map: HashMap<MusicianId, Position> = p.chunks(2)
+        .enumerate()
+        .map(|(id, p)| {
+          (MusicianId(id), Position { x: p[0], y: p[1] })
+        })
+        .collect();
 
-        loop {
+      let func = inst_score_functions.get(&Instrument(0)).unwrap();
+
+      func(musician_map)
+    },
+    || {
+      let mut random = rand::thread_rng();
+
+      let musician_count = problem.musicians.len();
+      let mut all_musicians = Vec::with_capacity(musician_count * 2);
+
+      let mut claimed_positions = Vec::with_capacity(musician_count);
+
+      for _i in 0..musician_count {
+        let mut x ;
+        let mut y ;
+        let mut position;
+
+        'find_pos: loop {
           x = random.gen_range(x_start..=x_end);
           y = random.gen_range(y_start..=y_end);
+          position = Position { x, y };
 
-          for other in musician_position_state_map.borrow().values() {
-            if dist(&Position{x,y}, other) <= ALLOWED_MUSICIAN_DISTANCE {
-              continue
+          for already_claimed in claimed_positions.iter() {
+            if dist(&position, already_claimed) <= ALLOWED_MUSICIAN_DISTANCE {
+              continue 'find_pos
             }
           }
 
           break;
         }
 
-        Particle {
-          position: vec![x, y],
-          velocity: vec![0f32, 0f32],
-          best_known_position: vec![x, y]
-        }
+        all_musicians.push(x);
+        all_musicians.push(y);
+        claimed_positions.push(position)
       }
-    );
 
-    let best_position_for_musician = opt.optimize();
+      Particle {
+        position: all_musicians.clone(),
+        velocity: vec![0f32; musician_count * 2],
+        best_known_position: all_musicians
+      }
+    }
+  );
 
-    musician_position_state_map.borrow_mut().insert(mus, Position { x: best_position_for_musician[0], y: best_position_for_musician[1] });
-  }
+  let best_position_for_all_musicians = opt.optimize();
 
   pb.finish_with_message("Optimized");
 
-  let result = musician_position_state_map.borrow();
-  result.clone()
+  let musician_map: HashMap<MusicianId, Position> = best_position_for_all_musicians.chunks(2)
+    .enumerate()
+    .map(|(id, p)| {
+      (MusicianId(id), Position { x: p[0], y: p[1] })
+    })
+    .collect();
+
+  musician_map
 }
 
 
