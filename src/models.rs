@@ -9,7 +9,7 @@ pub struct Instrument(pub usize);
 pub struct Attendee {
   #[serde(flatten)]
   pub position: Position,
-  pub tastes: Vec<i64>
+  pub tastes: Vec<f64>
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]

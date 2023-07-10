@@ -35,7 +35,7 @@ pub fn particle_swarm_optimizer(problem: &ProblemSpec) -> HashMap<MusicianId, Po
   let attendees: HashMap<usize, Attendee> = problem.attendees.iter().cloned().enumerate().collect();
 
 
-  let mut inst_scores: MultiMap<Instrument, (Position, i64)> = multimap::MultiMap::new();
+  let mut inst_scores: MultiMap<Instrument, (Position, f64)> = multimap::MultiMap::new();
 
   for (_id, attendee) in attendees {
     for (inst, &score) in attendee.tastes.iter().enumerate() {

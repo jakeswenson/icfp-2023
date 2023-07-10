@@ -1,6 +1,6 @@
 use std::collections::HashMap;
-use ::z3::ast::Ast;
 use ::z3::Symbol;
+use z3::ast::Float;
 use crate::models::{Attendee, Instrument, Position, ProblemSpec};
 use super::{AttendeeId, MusicianId};
 
@@ -42,13 +42,13 @@ pub fn optimize(problem: ProblemSpec) -> HashMap<MusicianId, Position> {
       })
     }).collect();
 
-  let attendee_tastes: HashMap<AttendeeId, HashMap<MusicianId, i64>> =  attendees.iter().map(|(a_id, a)| {
+  let attendee_tastes: HashMap<AttendeeId, HashMap<MusicianId, f64>> =  attendees.iter().map(|(a_id, a)| {
     (*a_id, musicians.iter().map(|(m, inst)| {
-      (*m, 1_000_000i64.checked_mul(a.tastes[inst.0]).unwrap())
+      (*m, 1_000_000f64 * a.tastes[inst.0])
     }).collect())
   }).collect();
 
-  let scores: Vec<Score<'_>> = attendees.iter().flat_map(|(attendees_id, a)| {
+  let scores: Vec<Float<'_>> = attendees.iter().flat_map(|(attendees_id, a)| {
     let x = a.position.x as i64;
     let y = a.position.y as i64;
     let attendees_id = *attendees_id;
@@ -63,16 +63,16 @@ pub fn optimize(problem: ProblemSpec) -> HashMap<MusicianId, Position> {
     let x_dist = symbols.x_var.clone() - x;
     let y_dist = symbols.y_var.clone() - y;
 
-    let dist_squared = x_dist.clone() * x_dist + y_dist.clone() * y_dist;
+    let _dist_squared = x_dist.clone() * x_dist + y_dist.clone() * y_dist;
     let calculated_score = attendee_tastes
       .get(&attendees_id).unwrap()
       .get(&musician_id).copied().unwrap();
 
-    let score = Score::from_i64(&ctx, calculated_score);
+    let score = Float::from_f64(&ctx, calculated_score);
 
-    let adjusted = score/dist_squared;
+    //let adjusted = score/dist_squared;
 
-    adjusted
+   score
   }).collect();
 
   let x_start = (problem.stage_bottom_left[0] as i64) + 10;
@@ -95,13 +95,13 @@ pub fn optimize(problem: ProblemSpec) -> HashMap<MusicianId, Position> {
   });
 
 
-  let total_score_symbol = Symbol::String("TotalScore".into());
+  let _total_score_symbol = Symbol::String("TotalScore".into());
 
-  let total_score = Score::new_const(&ctx, total_score_symbol);
+ // let total_score = Float::new_const(&ctx, total_score_symbol);
 
-  let sum_of_scores = scores.into_iter().reduce(|a, b| a + b).unwrap().clone();
+  let sum_of_scores = scores.into_iter().reduce(|a, _b| a ).unwrap().clone();
 
-  dbg!(optimize.check(&[total_score._eq(&sum_of_scores)]));
+ // dbg!(optimize.check(&[total_score._eq(&sum_of_scores)]));
 
   optimize.maximize(&sum_of_scores);
 
