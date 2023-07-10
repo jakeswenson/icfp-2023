@@ -94,11 +94,11 @@ pub fn particle_swarm_optimizer(problem: &ProblemSpec) -> HashMap<MusicianId, Po
 
     let mut opt = mincost::PsOpt::init(
       PsoConfig {
-        pop_size: 10,
+        pop_size: 100,
         omega: 1.0,
         phi_g: 0.1,
         phi_p: 0.1,
-        learning_rate: 0.6,
+        learning_rate: 0.2,
         iteration: 1000,
       },
       |p| {

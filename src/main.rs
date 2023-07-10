@@ -1,6 +1,9 @@
 use std::path::{PathBuf};
 use crate::models::{Position, ProblemSpec, Solution};
 use clap::{Parser, Subcommand};
+use reqwest::header::{HeaderMap, HeaderValue};
+use reqwest::blocking::Response;
+use serde::Serialize;
 use crate::optimizer::MusicianId;
 
 mod models;
@@ -31,11 +34,14 @@ enum Commands {
   Swarm {
     problem: PathBuf,
     #[arg(short, long)]
-    render: bool
+    render: bool,
+    #[arg(short, long)]
+    submit: Option<u32>,
   },
 }
 
 fn main() -> Result<(), anyhow::Error> {
+  dotenvy::dotenv()?;
   let cli: Cli = Cli::parse();
 
   match &cli.command {
@@ -54,7 +60,7 @@ fn main() -> Result<(), anyhow::Error> {
           .map(|(id, p)| (MusicianId(id), p)).collect()
       } ));
     }
-    Commands::Swarm { problem, render } => {
+    Commands::Swarm { problem, render, submit } => {
       let json = std::fs::read_to_string(problem)?;
       let problem_spec: ProblemSpec = serde_json::from_str(&json)?;
       let result = optimizer::particle_swarm_optimizer(&problem_spec);
@@ -70,9 +76,13 @@ fn main() -> Result<(), anyhow::Error> {
         placements: ordered
       };
 
-
-
       std::fs::write(format!("solution-{}", problem.file_name().unwrap().to_str().unwrap()), &serde_json::to_vec(&solution)?)?;
+
+
+      if let Some(problem_id) = submit {
+        let response = Submitter::submit(*problem_id, &solution)?;
+        println!("Response code: {}", response.status())
+      }
 
       if *render {
         render::run_app(problem_spec, Some(result))
@@ -81,6 +91,37 @@ fn main() -> Result<(), anyhow::Error> {
   }
 
   Ok(())
+}
+
+struct Submitter;
+
+impl Submitter {
+  fn submit(problem_id: u32, solution: &Solution) -> Result<Response, anyhow::Error> {
+    let mut header_map = HeaderMap::new();
+
+    let token = std::env::var("API_TOKEN")?;
+
+    header_map.insert("Authorization", HeaderValue::from_str(&format!("Bearer {}", token))?);
+
+    let client = reqwest::blocking::Client::builder()
+      .default_headers(header_map)
+      .build()?;
+
+    #[derive(Serialize)]
+    struct Payload {
+      problem_id: u32,
+      contents: String
+    }
+
+    let response = client.post("https://api.icfpcontest.com/submission")
+      .json(&Payload {
+        problem_id,
+        contents: serde_json::to_string(&solution)?
+      })
+      .send()?;
+
+    Ok(response)
+  }
 }
 
 #[cfg(test)]
