@@ -1,6 +1,6 @@
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::sync::Mutex;
 use indicatif::{ProgressBar, ProgressStyle};
 use mincost::{Particle, PsoConfig};
 use multimap::MultiMap;
@@ -152,7 +152,7 @@ pub fn particle_swarm_optimizer(problem: &ProblemSpec) -> HashMap<MusicianId, Po
   }
 
   let mut inst_score_functions: HashMap<Instrument, Box<dyn Fn(Position) -> f64>> = HashMap::new();
-  let m = Rc::new(Mutex::new(mus_map));
+  let m = Rc::new(RefCell::new(mus_map));
 
   fn dist(p1: &Position, p2: &Position) -> f32 {
     let del_x = p1.x - p2.x;
@@ -166,14 +166,12 @@ pub fn particle_swarm_optimizer(problem: &ProblemSpec) -> HashMap<MusicianId, Po
     inst_score_functions.insert(inst, Box::new(move |pos| {
       if !(x_start..=x_end).contains(&pos.x)
         || !(y_start..=y_end).contains(&pos.y) {
-        return 10.0;
+        return f64::MAX
       }
 
-      let l = m.lock();
-      let b = l.unwrap();
-      for other in b.values() {
+      for other in m.borrow().values() {
         if dist(&pos, other) <= 10.0 {
-          return 100.0
+          return f64::MAX
         }
       }
 
@@ -220,12 +218,12 @@ pub fn particle_swarm_optimizer(problem: &ProblemSpec) -> HashMap<MusicianId, Po
     progress+=1;
     let mut opt = mincost::PsOpt::init(
       PsoConfig {
-        pop_size: 100,
+        pop_size: 10,
         omega: 0.1,
         phi_g: 0.1,
         phi_p: 0.1,
         learning_rate: 0.1,
-        iteration: problem.attendees.len(),
+        iteration: 1000,
       },
       |p| {
         let pos = Position { x: p[0], y: p[1] };
@@ -238,15 +236,12 @@ pub fn particle_swarm_optimizer(problem: &ProblemSpec) -> HashMap<MusicianId, Po
         let x ;
         let y ;
 
-        let l = m.lock();
-        let b = l.unwrap();
-
         loop {
           x = random.gen_range(x_start..=x_end);
           y = random.gen_range(y_start..=y_end);
 
-          for other in b.values() {
-            if dist(&Position{x,y}, other) <= 10.0 {
+          for other in m.borrow().values() {
+            if dist(&Position{x,y}, other) <= 11.0 {
               continue
             }
           }
@@ -264,15 +259,13 @@ pub fn particle_swarm_optimizer(problem: &ProblemSpec) -> HashMap<MusicianId, Po
 
     let position = opt.optimize();
 
-    m.lock().unwrap().insert(mus, Position { x: position[0], y: position[1] });
+    m.borrow_mut().insert(mus, Position { x: position[0], y: position[1] });
   }
 
   pb.finish_with_message("Optimized");
 
-
-  let lock = m.lock();
-  let guard = lock.unwrap();
-  guard.clone()
+  let result = m.borrow();
+  result.clone()
 }
 
 

@@ -24,6 +24,8 @@ enum Commands {
   /// Runs Renderer on provided problem
   Render {
     problem: PathBuf,
+    #[arg(short, long)]
+    solution: Option<PathBuf>
   },
   /// Runs Particle Swarm Optimizer on the provided problem
   Swarm {
@@ -42,10 +44,15 @@ fn main() -> Result<(), anyhow::Error> {
       let problem_spec: ProblemSpec = serde_json::from_str(&json)?;
       dbg!(optimizer::optimize(problem_spec));
     }
-    Commands::Render { problem } => {
+    Commands::Render { problem, solution } => {
       let json = std::fs::read_to_string(problem)?;
       let problem_spec: ProblemSpec = serde_json::from_str(&json)?;
-      render::run_app(dbg!(problem_spec), None);
+      render::run_app(problem_spec, solution.clone().map(|sol| {
+        let json = std::fs::read_to_string(sol).unwrap();
+        let solution: Solution = serde_json::from_str(&json).unwrap();
+        solution.placements.into_iter().enumerate()
+          .map(|(id, p)| (MusicianId(id), p)).collect()
+      } ));
     }
     Commands::Swarm { problem, render } => {
       let json = std::fs::read_to_string(problem)?;
@@ -56,14 +63,16 @@ fn main() -> Result<(), anyhow::Error> {
 
       for idx in 0..result.len() {
         let v = result.get(&MusicianId(idx)).unwrap();
-        ordered.push(Position { x: v.x.floor(), y: v.y.floor() });
+        ordered.push(Position { x: v.x, y: v.y });
       }
 
       let solution = Solution {
         placements: ordered
       };
 
-      std::fs::write("solution.json", &serde_json::to_vec(&solution)?)?;
+
+
+      std::fs::write(format!("solution-{}", problem.file_name().unwrap().to_str().unwrap()), &serde_json::to_vec(&solution)?)?;
 
       if *render {
         render::run_app(problem_spec, Some(result))

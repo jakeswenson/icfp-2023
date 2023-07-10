@@ -29,7 +29,7 @@ pub struct Position {
   pub y: Dimension,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 pub struct Solution {
   pub placements: Vec<Position>
 }
