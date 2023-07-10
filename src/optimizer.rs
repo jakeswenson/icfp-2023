@@ -127,6 +127,9 @@ pub fn optimize(problem: ProblemSpec) -> HashMap<MusicianId, Position> {
   }).collect()
 }
 
+// Really 10 is supposed to be allowed, but I'm not sure if this works or not
+const ALLOWED_MUSICIAN_DISTANCE: f32 = 10.5;
+
 pub fn particle_swarm_optimizer(problem: &ProblemSpec) -> HashMap<MusicianId, Position> {
   let mus_inst: HashMap<MusicianId, Instrument> = problem.musicians.iter().copied().enumerate()
     .map(|(idx, inst)| (MusicianId(idx), inst))
@@ -170,13 +173,13 @@ pub fn particle_swarm_optimizer(problem: &ProblemSpec) -> HashMap<MusicianId, Po
       }
 
       for other in m.borrow().values() {
-        if dist(&pos, other) <= 10.0 {
+        if dist(&pos, other) <= ALLOWED_MUSICIAN_DISTANCE {
           return f64::MAX
         }
       }
 
-      scores.iter().map(|(a_pos, score)| {
-        let top = (*score as f64) * 1_000_000.0f64;
+      scores.iter().map(|(a_pos, taste)| {
+        let top = (*taste as f64) * 1_000_000.0f64;
         let del_x = a_pos.x - pos.x;
         let del_y = a_pos.y - pos.y;
         let dist_sq = del_x * del_x + del_y * del_y;
@@ -241,7 +244,7 @@ pub fn particle_swarm_optimizer(problem: &ProblemSpec) -> HashMap<MusicianId, Po
           y = random.gen_range(y_start..=y_end);
 
           for other in m.borrow().values() {
-            if dist(&Position{x,y}, other) <= 11.0 {
+            if dist(&Position{x,y}, other) <= ALLOWED_MUSICIAN_DISTANCE {
               continue
             }
           }
@@ -256,6 +259,7 @@ pub fn particle_swarm_optimizer(problem: &ProblemSpec) -> HashMap<MusicianId, Po
         }
       }
     );
+
 
     let position = opt.optimize();
 
