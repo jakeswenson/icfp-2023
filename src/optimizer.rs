@@ -6,6 +6,9 @@ use mincost::{Particle, PsoConfig};
 use multimap::MultiMap;
 use rand::Rng;
 use crate::models::{Attendee, Instrument, Position, ProblemSpec};
+use parry2d::math::{Isometry, Point, Vector};
+use parry2d::shape::{Ball, Segment};
+use parry2d::bounding_volume::BoundingVolume;
 
 pub mod z3;
 
@@ -68,6 +71,36 @@ pub fn particle_swarm_optimizer(problem: &ProblemSpec) -> HashMap<MusicianId, Po
       }
 
       scores.iter().map(|(a_pos, taste)| {
+
+        // check if any musician other is in the way between pos and a_pos
+        let line_start = Point::new(a_pos.x, a_pos.y);
+        let line_end = Point::new(pos.x, pos.y);
+        let segment = Segment::new(line_start, line_end);
+        let segment_aabb = segment.aabb(&Isometry::translation(line_start.x, line_start.y));
+        let circle_radius = 5.0;
+        let circle_shape = Ball::new(circle_radius);
+
+        for other in m.borrow().values() {
+          if pos == *other {
+            continue
+          } else {
+            let circle_center = Point::new(other.x, other.y);
+            let circle_aabb = circle_shape.aabb(&Isometry::translation(circle_center.x, circle_center.y));
+
+            if segment_aabb.intersects(&circle_aabb) {
+              return 0.0
+            }
+
+            /*
+            let intersection = parry2d::query::intersection_test(
+              &Isometry::translation(line_start.x, line_start.y),
+              &segment,
+              &Isometry::translation(circle_center.x, circle_center.y),
+              &circle_shape);
+              */
+          }
+        }
+
         let top = (*taste as f64) * 1_000_000.0f64;
         let del_x = a_pos.x - pos.x;
         let del_y = a_pos.y - pos.y;
@@ -99,7 +132,7 @@ pub fn particle_swarm_optimizer(problem: &ProblemSpec) -> HashMap<MusicianId, Po
         phi_g: 0.1,
         phi_p: 0.1,
         learning_rate: 0.2,
-        iteration: 1000,
+        iteration: 50,
       },
       |p| {
         let pos = Position { x: p[0], y: p[1] };
