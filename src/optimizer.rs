@@ -104,7 +104,7 @@ pub fn particle_swarm_optimizer(problem: &ProblemSpec) -> HashMap<MusicianId, Po
     score
   }));
 
-  let particle_count: usize = 2000;
+  let particle_count: usize = mus_inst.len();
   let num_iterations: usize = 10_000;
 
   let pb = ProgressBar::new((particle_count * num_iterations * 2) as u64);
@@ -121,9 +121,9 @@ pub fn particle_swarm_optimizer(problem: &ProblemSpec) -> HashMap<MusicianId, Po
   let mut opt = mincost::PsOpt::init(
     PsoConfig {
       pop_size: particle_count,
-      omega: 3.0,
-      phi_g: 0.2,
-      phi_p: 0.1,
+      omega: 0.2,
+      phi_g: 1.5,
+      phi_p: 2.0,
       learning_rate: 0.8,
       iteration: num_iterations,
     },
